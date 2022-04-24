@@ -1,3 +1,4 @@
+//Copyright by Ossi Tapio 2022
 #include "SDL2/SDL.h"
 #include "SDL2/SDL_video.h"
 #include <iostream>
@@ -8,19 +9,22 @@
 #include <random>
 #include <omp.h>
 
-#define fps 60
-#define window_width 640*2
-#define window_height 480*2
+
 #define pi 3.1415926535
-#define NUM_THREADS 32
+
 //#include "nbody.h"
 
 
 // Parameters
-const int numberOfDimensions = 2;          // dimensions
-const double smoothingParameter = 1e-4;    // smoothing parameter
-const uint64_t numberOfParticles = 160;
-uint64_t how_many_threads = NUM_THREADS;
+constexpr uint64_t numberOfDimensions = 2;          // dimensions
+constexpr double smoothingParameter = 1e-4;    // smoothing parameter
+constexpr uint64_t numberOfParticles = 320;
+constexpr uint64_t how_many_threads = 32;
+constexpr uint64_t fps = 60;
+constexpr uint64_t window_width = 640*2;
+constexpr uint64_t window_height = 480*2;
+constexpr double deltaTime = 0.001;
+constexpr double maxSimulationTime = 0.1;
 // Function prototypes
 inline double sqr(double);
 
@@ -37,7 +41,7 @@ std::mt19937 generator(rd());
 std::uniform_real_distribution<double> distribution_x(0.0,window_width);
 std::uniform_real_distribution<double> distribution_y(0.0,window_height);
 std::uniform_real_distribution<double> distribution_v(-1.0,1.0);
-std::uniform_real_distribution<double> mass_randomness(1.0,1000.0);
+std::uniform_real_distribution<double> mass_randomness(10.0,10000.0);
 
 struct Particle{
 
@@ -64,23 +68,22 @@ struct Particle{
     ~Particle(){}
 };
 
-
 void comp_force(std::vector<Particle>& particles) {
     uint64_t particle_i, particle_j;
     uint64_t dimension_d;
-
     omp_set_num_threads(how_many_threads);
     uint64_t shared_num_threads=omp_get_num_threads(); //"nthreads" in video
-    #pragma omp parallel// for ordered schedule(static)
+    #pragma omp parallel private(particle_i, dimension_d) shared(particles, numberOfParticles)// for ordered schedule(static)
     {
         uint64_t particle_i;
         uint64_t id=omp_get_thread_num();
         double local_sum=0.0;
         uint64_t local_num_threads=omp_get_num_threads(); //"nthrds" in video
-
         if(id==0)//only do once
-        shared_num_threads=local_num_threads;
-        #pragma omp parallel for private(particle_i, dimension_d)  shared(particles, numberOfParticles)//ordered schedule(static)
+        {
+           shared_num_threads=local_num_threads;
+        }
+        #pragma omp for
         for (particle_i=id; particle_i < numberOfParticles; particle_i += local_num_threads)
         {
             for (dimension_d=0; dimension_d<numberOfDimensions; dimension_d++) {
@@ -89,11 +92,20 @@ void comp_force(std::vector<Particle>& particles) {
         }
     }
 
-    std::vector<Particle> particlesResults(numberOfParticles);
     double r,f;
-
-#pragma omp parallel for private(r,f,particle_i, particle_j, dimension_d)  shared(particles,particlesResults, numberOfParticles,smoothingParameter)//ordered schedule(static)
-    for (particle_i=0; particle_i<numberOfParticles; particle_i++) {
+#pragma omp parallel private(r,f,particle_i, particle_j, dimension_d) shared(particles, numberOfParticles,smoothingParameter)// ordered schedule(static)
+{
+    uint64_t particle_i, particle_j;
+    uint64_t id=omp_get_thread_num();
+    double local_sum=0.0;
+    uint64_t local_num_threads=omp_get_num_threads(); //"nthrds" in video
+    double r,f;
+    if(id==0)//only do once
+    {
+        shared_num_threads=local_num_threads;
+    }
+    #pragma omp for
+    for (particle_i=id; particle_i < numberOfParticles; particle_i += local_num_threads) {
         for (particle_j=particle_i+1; particle_j<numberOfParticles; particle_j++) {
             r=smoothingParameter; // smoothing
             for (dimension_d=0; dimension_d<numberOfDimensions; dimension_d++) {
@@ -108,14 +120,31 @@ void comp_force(std::vector<Particle>& particles) {
         }
     }
 }
+}
+
+
+
 
 
 void comp_velocity(std::vector<Particle>& particles, const double deltaTime) 
 {    
     uint64_t particle_i, dimension_d;
     double acceleration;
-    #pragma omp parallel for private(acceleration ,particle_i, dimension_d)  shared(particles, numberOfParticles, deltaTime)//ordered schedule(static)
-    for (particle_i=0; particle_i<numberOfParticles; particle_i++) 
+    uint64_t shared_num_threads=omp_get_num_threads();
+    //#pragma omp parallel for private(acceleration ,particle_i, dimension_d)  shared(particles, numberOfParticles, deltaTime)//ordered schedule(static)
+#pragma omp parallel private(particle_i, dimension_d, acceleration) shared(particles, numberOfParticles)// ordered schedule(static)
+{
+    double acceleration;
+    uint64_t particle_i, dimension_d;
+    uint64_t id=omp_get_thread_num();
+    double local_sum=0.0;
+    uint64_t local_num_threads=omp_get_num_threads(); //"nthrds" in video
+    if(id==0)//only do once
+    {
+        shared_num_threads=local_num_threads;
+    }
+    #pragma omp for
+    for (particle_i=id; particle_i<numberOfParticles; particle_i += local_num_threads) 
     {
         acceleration = deltaTime * 0.5 / particles[particle_i].mass;
         for (dimension_d=0; dimension_d<numberOfDimensions; dimension_d++) 
@@ -124,12 +153,26 @@ void comp_velocity(std::vector<Particle>& particles, const double deltaTime)
         }
     }
 }
+}
 
 void comp_position(std::vector<Particle>& particles, const double deltaTime) 
 {
     uint64_t particle_i, dimension_d;
     double acceleration;
-    #pragma omp parallel for private(acceleration ,particle_i, dimension_d)  shared(particles, numberOfParticles, deltaTime)//ordered schedule(static)
+    uint64_t shared_num_threads=omp_get_num_threads();
+    //#pragma omp parallel for private(acceleration ,particle_i, dimension_d)  shared(particles, numberOfParticles, deltaTime)//ordered schedule(static)
+#pragma omp parallel private(particle_i, dimension_d, acceleration) shared(particles, numberOfParticles)// ordered schedule(static)
+{
+    double acceleration;
+    uint64_t particle_i, dimension_d;
+    uint64_t id=omp_get_thread_num();
+    double local_sum=0.0;
+    uint64_t local_num_threads=omp_get_num_threads(); //"nthrds" in video
+    if(id==0)//only do once
+    {
+        shared_num_threads=local_num_threads;
+    }
+    #pragma omp for
     for (particle_i=0; particle_i<numberOfParticles; particle_i++) 
     {
         acceleration = deltaTime * 0.5 / particles[particle_i].mass;
@@ -140,19 +183,8 @@ void comp_position(std::vector<Particle>& particles, const double deltaTime)
         }
     }
 }
-
-/*int main() {
-    //Nbody nbody(16, 0.001, 0.1);
-    //nbody.timeIntegration();
-
-}*/
-
-void cap_framerate(uint32_t starting_tick)
-{
-    if ((1000 / fps)>SDL_GetTicks() - starting_tick){
-        SDL_Delay(1000/fps - (SDL_GetTicks() - starting_tick));
-    }
 }
+
 
 class Sprite
 {
@@ -440,8 +472,6 @@ int main( int argc, char* args[] )
 {
     //Nbody nbody(1600, 0.001, 0.1);
     std::vector<Particle> particles(numberOfParticles);
-    const double deltaTime = 0.001;
-    const double maxSimulationTime = 0.1;
     uint64_t step = 0;
     double time = 0;
 
@@ -452,7 +482,12 @@ int main( int argc, char* args[] )
 
     window = SDL_CreateWindow(
         "Minun SDL-ikkuna",                  // window title
-        SDL_WINDOWPOS_UNDEFINED,           // initial x position        //nbody.timeIntegration();
+        SDL_WINDOWPOS_UNDEFINED,           // initial x position
+        SDL_WINDOWPOS_UNDEFINED,           // initial y position
+        window_width,                               // width, in pixels
+        window_height,                               // height, in pixels
+        SDL_WINDOW_RESIZABLE//,                  // flags - see below
+        //SDL_WINDOW_OPENGL
     );
 
     if (window == NULL) {
@@ -482,9 +517,10 @@ int main( int argc, char* args[] )
     SDL_FillRect(screen, NULL, almost_black);
     
     std::vector<Block> hiukkaset;
+    double massakerroin = (1./numberOfParticles) * 2000;
     for(uint32_t i = 0; i < numberOfParticles; i++)
     {
-        hiukkaset.emplace_back(white, particles[i].position[0], particles[i].position[1], 5 * (particles[i].mass), 5 * (particles[i].mass));
+        hiukkaset.emplace_back(white, particles[i].position[0], particles[i].position[1], 1 + 1 * (particles[i].mass/massakerroin), 1 + 1 * (particles[i].mass/massakerroin));
     }
     
 
@@ -507,6 +543,7 @@ int main( int argc, char* args[] )
 
     uint64_t aika, laskuri = 0;
     comp_force(particles);
+    double start_time = omp_get_wtime();
     while(event_running)
     {
         starting_tick = SDL_GetTicks();
@@ -525,20 +562,20 @@ int main( int argc, char* args[] )
         comp_position(particles, deltaTime);
         comp_force(particles);
         comp_velocity(particles, deltaTime);
+        // std::cout << "deltaTime: " << deltaTime << "\n";
+        // std::cout << "maxSimulationTime: " << maxSimulationTime << "\n";
+        // std::cout << "numberOfParticles: " << numberOfParticles << "\n";
         if (laskuri == 600)
         {
-            std::cout << "\n";
-            std::cout << "particles[0].position[0]: " << particles[0].position[0] << " particles[0].position[1]: " <<  particles[0].position[1] << "\n";
-            std::cout << "deltaTime: " << deltaTime << "\n";
-            std::cout << "maxSimulationTime: " << maxSimulationTime << "\n";
-            std::cout << "numberOfParticles: " << numberOfParticles << "\n";
-            std::cout << "step: " << step << "\n";
-            std::cout << "particles[0].Force[0]: " << particles[0].Force[0] << "\n";
-            std::cout << "particles[0].Force_old[0]:" << particles[0].Force_old[0] << "\n";
-            std::cout << "particles[0].mass: " << particles[0].mass << "\n";
-            std::cout << "particles[0].velocity[0]: " << particles[0].velocity[0] << "\n\n";
+            //std::cout << "\n";
+            std::cout << "particles[0].position[0]: " << particles[0].position[0] << " particles[0].position[1]: " <<  particles[0].position[1] << " ";
+            std::cout << "particles[0].Force[0]: " << particles[0].Force[0] << " ";
+            std::cout << " Force_old[0]:" << particles[0].Force_old[0] << " ";
+            std::cout << " mass: " << particles[0].mass << " ";
+            std::cout << " velocity[0]: " << particles[0].velocity[0] << "  ";
             laskuri = 0;
-            
+            double run_time = omp_get_wtime() - start_time;
+            std::cout << "total runtime: " << run_time << "\n";
         }
 
         SDL_FillRect(screen, NULL, almost_black);
