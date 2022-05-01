@@ -7,10 +7,11 @@
 
 constexpr int numberOfDimensions = 2;
 constexpr float smoothingParameter = 1e-4;
-constexpr uint64_t numberOfParticles = 6400*16;
-constexpr uint64_t how_many_threads = 32;
+constexpr uint64_t numberOfParticles = 6400*32;
+constexpr uint64_t howManyThreads = 32;
 constexpr float deltaTime = 0.001;
 constexpr float maxSimulationTime = 0.1;
+constexpr uint8_t chunkSize = 46;
 
 uint64_t particle_i, particle_j, dimension_d;
 float acceleration, step;
@@ -48,7 +49,7 @@ struct Particle{
 void computeForce(std::vector<Particle>& particles) {
     computeForce_start_time = omp_get_wtime();
 
-    omp_set_num_threads(how_many_threads);
+    omp_set_num_threads(howManyThreads);
     uint64_t sharedNumberOfThreads = omp_get_num_threads();
     #pragma omp parallel private(particle_i, dimension_d) shared(particles, numberOfParticles)
     {
@@ -60,7 +61,7 @@ void computeForce(std::vector<Particle>& particles) {
         {
            sharedNumberOfThreads=localNumberOfThreads;
         }
-        #pragma omp for schedule(dynamic)
+        #pragma omp for schedule(dynamic, chunkSize) collapse(2)
         for (particle_i = threadIdNumber; particle_i < numberOfParticles; particle_i += localNumberOfThreads)
         {
             for (dimension_d = 0; dimension_d<numberOfDimensions; dimension_d++) {
@@ -81,14 +82,14 @@ void computeForce(std::vector<Particle>& particles) {
         uint64_t threadIdNumber = omp_get_thread_num();
         uint64_t localNumberOfThreads = omp_get_num_threads();
         float distance_r, auxiliaryResult, completeResult;
-        float dx,dy, d, d3, completeResultdx, completeResultdy;
+        float dx,dy, completeResultdx, completeResultdy;
         
         std::array<float, numberOfDimensions> distances;
         if(threadIdNumber == 0)
         {
             sharedNumberOfThreads = localNumberOfThreads;
         }
-        #pragma omp for schedule(dynamic)
+        #pragma omp for schedule(nonmonotonic:dynamic, chunkSize)
         for (particle_i = threadIdNumber; particle_i < numberOfParticles; particle_i += localNumberOfThreads) {
             for (particle_j = particle_i + 1; particle_j < numberOfParticles; particle_j++) {
                 dx = particles[particle_j].position[0] - particles[particle_i].position[0];
@@ -104,20 +105,6 @@ void computeForce(std::vector<Particle>& particles) {
 
                 particles[particle_j].Force[0] -= completeResultdx;
                 particles[particle_j].Force[1] -= completeResultdy;
-                //particles[particle_j].Force[dimension_d] -= completeResult;
-
-                // distance_r = smoothingParameter;
-                // for (dimension_d = 0; dimension_d < numberOfDimensions; dimension_d++) {
-                //     distance_r += sqr(particles[particle_j].position[dimension_d] - particles[particle_i].position[dimension_d]);
-                // }
-                // auxiliaryResult = particles[particle_i].mass * particles[particle_j].mass / (std::sqrt(distance_r) * distance_r);
-                // for (dimension_d = 0; dimension_d < numberOfDimensions; dimension_d++) 
-                // {
-                //     completeResult = auxiliaryResult * (particles[particle_j].position[dimension_d] - particles[particle_i].position[dimension_d]);
-
-                //     particles[particle_i].Force[dimension_d] += completeResult;
-                //     particles[particle_j].Force[dimension_d] -= completeResult;
-                // }
             }
         }
     }
@@ -139,7 +126,7 @@ void computeVelocity(std::vector<Particle>& particles)
         {
             sharedNumberOfThreads = localNumberOfThreads;
         }
-        #pragma omp for schedule(dynamic)
+        #pragma omp for schedule(dynamic, chunkSize)
         for (particle_i = threadIdNumber; particle_i < numberOfParticles; particle_i += localNumberOfThreads) 
         {
             acceleration = deltaTime * 0.5 / particles[particle_i].mass;
@@ -166,7 +153,7 @@ void computePosition(std::vector<Particle>& particles)
         {
             sharedNumberOfThreads = localNumberOfThreads;
         }
-        #pragma omp for schedule(dynamic)
+        #pragma omp for schedule(dynamic, chunkSize)
         for (particle_i = 0; particle_i < numberOfParticles; particle_i += localNumberOfThreads) 
         {
             acceleration = deltaTime * 0.5 / particles[particle_i].mass;
@@ -189,7 +176,7 @@ int main()
     std::vector<Particle> particles(numberOfParticles);
     
     uint64_t step;
-    std::cout << "number of threads: " << how_many_threads << "  deltaTime: " << deltaTime << "  maxSimulationTime: " << maxSimulationTime << "  numberOfParticles: " << numberOfParticles << "\n";
+    std::cout << "number of threads: " << howManyThreads << "  deltaTime: " << deltaTime << "  maxSimulationTime: " << maxSimulationTime << "  numberOfParticles: " << numberOfParticles << "\n";
     computeForce(particles);
     uint64_t numberOfSteps = maxSimulationTime/deltaTime;
     for(step = 0; time < maxSimulationTime; time+=deltaTime, step+=1) {
