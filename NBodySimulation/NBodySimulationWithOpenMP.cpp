@@ -45,10 +45,6 @@ struct Particle{
     ~Particle(){}
 };
 
-float sqr(float x) {
-    return x*x;
-}
-
 void computeForce(std::vector<Particle>& particles) {
     computeForce_start_time = omp_get_wtime();
 
@@ -85,6 +81,8 @@ void computeForce(std::vector<Particle>& particles) {
         uint64_t threadIdNumber = omp_get_thread_num();
         uint64_t localNumberOfThreads = omp_get_num_threads();
         float distance_r, auxiliaryResult, completeResult;
+        float dx,dy, d, d3, completeResultdx, completeResultdy;
+        
         std::array<float, numberOfDimensions> distances;
         if(threadIdNumber == 0)
         {
@@ -93,18 +91,33 @@ void computeForce(std::vector<Particle>& particles) {
         #pragma omp for schedule(dynamic)
         for (particle_i = threadIdNumber; particle_i < numberOfParticles; particle_i += localNumberOfThreads) {
             for (particle_j = particle_i + 1; particle_j < numberOfParticles; particle_j++) {
-                distance_r = smoothingParameter;
-                for (dimension_d = 0; dimension_d < numberOfDimensions; dimension_d++) {
-                    distance_r += sqr(particles[particle_j].position[dimension_d] - particles[particle_i].position[dimension_d]);
-                }
-                auxiliaryResult = particles[particle_i].mass * particles[particle_j].mass / (std::sqrt(distance_r) * distance_r);
-                for (dimension_d = 0; dimension_d < numberOfDimensions; dimension_d++) 
-                {
-                    completeResult = auxiliaryResult * (particles[particle_j].position[dimension_d] - particles[particle_i].position[dimension_d]);
+                dx = particles[particle_j].position[0] - particles[particle_i].position[0];
+                dy = particles[particle_j].position[1] - particles[particle_i].position[1];
+                distance_r = dx*dx+dy*dy;
 
-                    particles[particle_i].Force[dimension_d] += completeResult;
-                    particles[particle_j].Force[dimension_d] -= completeResult;
-                }
+                auxiliaryResult = particles[particle_i].mass * particles[particle_j].mass / (std::sqrt(distance_r) * distance_r);
+                completeResultdx = auxiliaryResult * dx;
+                completeResultdy = auxiliaryResult * dy;
+
+                particles[particle_i].Force[0] += completeResultdx;
+                particles[particle_i].Force[1] += completeResultdy;
+
+                particles[particle_j].Force[0] -= completeResultdx;
+                particles[particle_j].Force[1] -= completeResultdy;
+                //particles[particle_j].Force[dimension_d] -= completeResult;
+
+                // distance_r = smoothingParameter;
+                // for (dimension_d = 0; dimension_d < numberOfDimensions; dimension_d++) {
+                //     distance_r += sqr(particles[particle_j].position[dimension_d] - particles[particle_i].position[dimension_d]);
+                // }
+                // auxiliaryResult = particles[particle_i].mass * particles[particle_j].mass / (std::sqrt(distance_r) * distance_r);
+                // for (dimension_d = 0; dimension_d < numberOfDimensions; dimension_d++) 
+                // {
+                //     completeResult = auxiliaryResult * (particles[particle_j].position[dimension_d] - particles[particle_i].position[dimension_d]);
+
+                //     particles[particle_i].Force[dimension_d] += completeResult;
+                //     particles[particle_j].Force[dimension_d] -= completeResult;
+                // }
             }
         }
     }
